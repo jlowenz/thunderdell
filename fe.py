@@ -6,6 +6,9 @@
 # (c) Copyright 2009-2017 by Joseph Reagle
 # Licensed under the GPLv3, see <http://www.gnu.org/licenses/gpl-3.0.html>
 #
+# 20170429: This version is an attempt to parallelize, but this is difficult
+# - order matters in assigning numbers to colliding identities and
+# - lxml will not work because works it doesn't pickle as concurrent would like
 
 """Extract a bibliography from a Freeplane mindmap"""
 
@@ -15,9 +18,11 @@
 import codecs
 from cgi import escape, parse_qs
 from collections import OrderedDict
+from concurrent import futures
 from functools import partial
 import logging
 from lxml.etree import parse
+# from xml.etree.ElementTree import parse
 from optparse import OptionParser
 import os
 import re
@@ -1497,7 +1502,10 @@ def build_bib(file_name, output):
     dbg("   mm_files = %s" % mm_files)
     while mm_files:
         partial_parse_mm = partial(parse_mm, entries, done)
-        entries_and_links = map(partial_parse_mm, mm_files)
+        # entries_and_links = map(partial_parse_mm, mm_files)
+        with futures.ProcessPoolExecutor() as executor:
+            entries_and_links = executor.map(partial_parse_mm, mm_files)
+
         for entries, links, mm_file in entries_and_links:
             if opts.chase and mm_file not in done:
                 for link in links:
