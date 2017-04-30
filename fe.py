@@ -15,6 +15,7 @@
 import codecs
 from cgi import escape, parse_qs
 from collections import OrderedDict
+from functools import partial
 import logging
 from lxml.etree import parse
 from optparse import OptionParser
@@ -1471,29 +1472,34 @@ RESULT_FILE_QUERY_BOX = """    <title>Results for '%s'</title>
 """
 
 
+def parse_mm(entries, done, mm_file):
+    """Parse the MM and return entries and links"""
+
+    links = []  # must be list because order matters for ident collisions
+    if mm_file not in done:
+        dbg("   processing %s" % mm_file)
+        doc = parse(mm_file).getroot()
+        dbg("   parsed %s" % mm_file)
+        entries, links = walk_freeplane(doc, mm_file, entries, links)
+    else:
+        dbg("   skipped %s" % mm_file)
+    return entries, links, mm_file
+
+
 def build_bib(file_name, output):
     """Collect the files to walk and invoke functions to build a bib"""
 
-    links = []          # list of other files encountered in the mind map
-    done = []           # list of files processed, kept to prevent loops
+    # links = set([])          # list of other files encountered in the mind map
+    done = set([])           # list of files processed, kept to prevent loops
     entries = OrderedDict()  # dict of {id : {entry}}, by insertion order
     mm_files = []
     mm_files.append(file_name)  # list of file encountered (e.g., chase option)
-    # dbg("   mm_files = %s" % mm_files)
+    dbg("   mm_files = %s" % mm_files)
     while mm_files:
-        mm_file = mm_files.pop()
-        if mm_file in done:
-            continue
-        else:
-            # dbg("   processing %s" % mm_file)
-            try:
-                doc = parse(mm_file).getroot()
-            except IOError as err:
-                # dbg("    failed to parse %s" % mm_file)
-                continue
-            # dbg("    successfully parsed %s" % mm_file)
-            entries, links = walk_freeplane(doc, mm_file, entries, links=[])
-            if opts.chase:
+        partial_parse_mm = partial(parse_mm, entries, done)
+        entries_and_links = map(partial_parse_mm, mm_files)
+        for entries, links, mm_file in entries_and_links:
+            if opts.chase and mm_file not in done:
                 for link in links:
                     link = os.path.abspath(
                         os.path.dirname(mm_file) + '/' + link)
@@ -1501,9 +1507,12 @@ def build_bib(file_name, output):
                         if not any([word in link for word in (
                                 'syllabus',
                                 'readings')]):
-                            # dbg("    placing %s in mm_files" % link)
+                            dbg("    placing %s in mm_files" % link)
                             mm_files.append(link)
-            done.append(os.path.abspath(mm_file))
+                        else:
+                            info("    already done = %s" % link)
+            mm_files.remove(mm_file)
+            done.add(os.path.abspath(mm_file))
 
     if opts.query:
         results_file_name = TMP_DIR + 'query-thunderdell.html'
