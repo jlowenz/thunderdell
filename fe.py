@@ -1488,7 +1488,7 @@ def parse_mm(entries, done, mm_file):
         entries, links = walk_freeplane(doc, mm_file, entries, links)
     else:
         dbg("   skipped %s" % mm_file)
-    return entries, links, mm_file
+    return [entries, links, mm_file]
 
 
 def build_bib(file_name, output):
@@ -1499,15 +1499,20 @@ def build_bib(file_name, output):
     entries = OrderedDict()  # dict of {id : {entry}}, by insertion order
     mm_files = []
     mm_files.append(file_name)  # list of file encountered (e.g., chase option)
-    dbg("   mm_files = %s" % mm_files)
     while mm_files:
+        info("mm_files = %s" % (mm_files))
+        info("done = %s" % (done))
         partial_parse_mm = partial(parse_mm, entries, done)
-        # entries_and_links = map(partial_parse_mm, mm_files)
-        with futures.ProcessPoolExecutor() as executor:
-            entries_and_links = executor.map(partial_parse_mm, mm_files)
+        entries_and_links = map(partial_parse_mm, mm_files)
+        # with futures.ProcessPoolExecutor() as executor:
+        #     entries_and_links = executor.map(partial_parse_mm, mm_files)
 
+        info("    entries_and_links = %s" % entries_and_links)
         for entries, links, mm_file in entries_and_links:
+            info("    links = %s" % links)
+            info("    mm_file = %s" % mm_file)
             if opts.chase and mm_file not in done:
+                info("    chasing links = %s" % (links))
                 for link in links:
                     link = os.path.abspath(
                         os.path.dirname(mm_file) + '/' + link)
