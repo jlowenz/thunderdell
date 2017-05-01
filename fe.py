@@ -21,8 +21,8 @@ from collections import OrderedDict
 from concurrent import futures
 from functools import partial
 import logging
-from lxml.etree import parse
-# from xml.etree.ElementTree import parse
+# from lxml.etree import parse
+from xml.etree.ElementTree import parse
 from optparse import OptionParser
 import os
 import re
@@ -40,7 +40,7 @@ critical = logging.critical
 info = logging.info
 dbg = logging.debug
 
-useLXML = True
+useLXML = False
 HOME = os.path.expanduser('~')
 DEFAULT_MAPS = (HOME + '/joseph/readings.mm',)
 
