@@ -6,9 +6,11 @@
 # (c) Copyright 2009-2017 by Joseph Reagle
 # Licensed under the GPLv3, see <http://www.gnu.org/licenses/gpl-3.0.html>
 #
-# 20170429: This version is an attempt to parallelize, but this is difficult
-# - order matters in assigning numbers to colliding identities and
-# - lxml will not work because works it doesn't pickle as concurrent would like
+# 20170501: This version is an attempt to parallelize, but this is difficult
+# - can't use lxml because it doesn't pickle
+# - order matters in assigning numbers to colliding identities
+# - entries would have to become a global some lock/queue mechanism, probably
+#   slow
 
 """Extract a bibliography from a Freeplane mindmap"""
 
@@ -1410,7 +1412,9 @@ def walk_freeplane(node, mm_file, entries, links):
         if 'LINK' in d.attrib:                  # found a local reference link
             if (not d.get('LINK').startswith('http:')
                     and d.get('LINK').endswith('.mm')):
-                links.append(unescape_XML(d.get('LINK')))
+                link = unescape_XML(d.get('LINK'))
+                link = os.path.abspath(os.path.dirname(mm_file) + '/' + link)
+                links.add(link)
         # skip nodes that are structure, comment, and empty of text
         if 'STYLE_REF' in d.attrib and d.get('TEXT'):
             if d.get('STYLE_REF') == 'author':
@@ -1480,14 +1484,15 @@ RESULT_FILE_QUERY_BOX = """    <title>Results for '%s'</title>
 def parse_mm(entries, done, mm_file):
     """Parse the MM and return entries and links"""
 
-    links = []  # must be list because order matters for ident collisions
+    links = set([])  # must be list because order matters for ident collisions
     if mm_file not in done:
-        dbg("   processing %s" % mm_file)
+        info("   starting parse %s" % mm_file)
         doc = parse(mm_file).getroot()
-        dbg("   parsed %s" % mm_file)
+        info("   done parse %s" % mm_file)
         entries, links = walk_freeplane(doc, mm_file, entries, links)
     else:
-        dbg("   skipped %s" % mm_file)
+        info("   skipped %s" % mm_file)
+        pass
     return [entries, links, mm_file]
 
 
@@ -1503,10 +1508,9 @@ def build_bib(file_name, output):
         info("mm_files = %s" % (mm_files))
         info("done = %s" % (done))
         partial_parse_mm = partial(parse_mm, entries, done)
-        entries_and_links = map(partial_parse_mm, mm_files)
-        # with futures.ProcessPoolExecutor() as executor:
-        #     entries_and_links = executor.map(partial_parse_mm, mm_files)
-
+        # entries_and_links = map(partial_parse_mm, mm_files)
+        with futures.ProcessPoolExecutor() as executor:
+            entries_and_links = executor.map(partial_parse_mm, mm_files)
         info("    entries_and_links = %s" % entries_and_links)
         for entries, links, mm_file in entries_and_links:
             info("    links = %s" % links)
@@ -1514,18 +1518,20 @@ def build_bib(file_name, output):
             if opts.chase and mm_file not in done:
                 info("    chasing links = %s" % (links))
                 for link in links:
-                    link = os.path.abspath(
-                        os.path.dirname(mm_file) + '/' + link)
+                    # link = os.path.abspath(
+                    #     os.path.dirname(mm_file) + '/' + link)
                     if link not in done:
                         if not any([word in link for word in (
                                 'syllabus',
                                 'readings')]):
-                            dbg("    placing %s in mm_files" % link)
+                            info("    placing %s in mm_files" % link)
                             mm_files.append(link)
                         else:
                             info("    already done = %s" % link)
+                            pass
             mm_files.remove(mm_file)
             done.add(os.path.abspath(mm_file))
+            info("done = %s" % (done))
 
     if opts.query:
         results_file_name = TMP_DIR + 'query-thunderdell.html'
