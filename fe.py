@@ -16,6 +16,7 @@
 import codecs
 from cgi import escape, parse_qs
 from collections import OrderedDict
+import glob
 import logging
 # from lxml.etree import parse
 from xml.etree.ElementTree import parse
@@ -39,6 +40,7 @@ dbg = logging.debug
 useLXML = False
 HOME = os.path.expanduser('~')
 DEFAULT_MAPS = (HOME + '/joseph/readings.mm',)
+MAPS_ROOT = HOME + '/joseph/'  # used for globbing
 
 TMP_DIR = HOME + '/tmp/.fe/'
 if not os.path.isdir(TMP_DIR):
@@ -1340,6 +1342,7 @@ def parse_names(names):
 def commit_entry(entry, entries):
     """Place an entry in the entries dictionary
     with default values if need be"""
+    info("entry = %s" % (entry))
     if entry != {}:
         entry.setdefault('author', [('', 'John', 'Doe', '')])
         entry.setdefault('title', 'Unknown')
@@ -1357,7 +1360,7 @@ def commit_entry(entry, entries):
         entries[entry['identifier']] = entry
 
 
-def walk_freeplane(node, mm_file, entries, links):
+def walk_freeplane(node, mm_file, entries):
     """Walk the freeplane XML tree and build:
     1. a dictionary of bibliographic entries.
     2. (optionally) for any given entry, lists of author, title, or
@@ -1403,10 +1406,6 @@ def walk_freeplane(node, mm_file, entries, links):
         return ancestor
 
     for d in node.getiterator():
-        if 'LINK' in d.attrib:                  # found a local reference link
-            if (not d.get('LINK').startswith('http:')
-                    and d.get('LINK').endswith('.mm')):
-                links.append(unescape_XML(d.get('LINK')))
         # skip nodes that are structure, comment, and empty of text
         if 'STYLE_REF' in d.attrib and d.get('TEXT'):
             if d.get('STYLE_REF') == 'author':
@@ -1425,13 +1424,6 @@ def walk_freeplane(node, mm_file, entries, links):
                 entry['_title_node'] = d
                 if 'LINK' in d.attrib:
                     entry['url'] = d.get('LINK')
-                if opts.query_c:
-                    author_highlighted = query_highlight(author_node, opts.query_c)
-                    if author_highlighted is not None:
-                        entry['_author_result'] = author_highlighted
-                    title_highlighted = query_highlight(d, opts.query_c)
-                    if title_highlighted is not None:
-                        entry['_title_result'] = title_highlighted
             else:
                 if d.get('STYLE_REF') == 'cite':
                     entry['cite'] = unescape_XML(d.get('TEXT'))
@@ -1445,7 +1437,7 @@ def walk_freeplane(node, mm_file, entries, links):
 
     commit_entry(entry, entries)  # commit the last entry as no new titles left
 
-    return entries, links
+    return entries
 
 
 RESULT_FILE_HEADER = """<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN"
@@ -1476,35 +1468,25 @@ RESULT_FILE_QUERY_BOX = """    <title>Results for '%s'</title>
 def build_bib(file_name, output):
     """Collect the files to walk and invoke functions to build a bib"""
 
-    links = []          # list of other files encountered in the mind map
-    done = []           # list of files processed, kept to prevent loops
     entries = OrderedDict()  # dict of {id : {entry}}, by insertion order
-    mm_files = []
-    mm_files.append(file_name)  # list of file encountered (e.g., chase option)
+    AVOID_FILES = {'syllabus', 'readings', 'old', 'test', '2r'}
+
+    if opts.glob:
+        mm_files = glob.iglob('%s/**/*.mm' % MAPS_ROOT, recursive=True)
+        mm_files = [mf for mf in mm_files
+                    if not any(avoid in mf for avoid in AVOID_FILES)]
+    else:
+        mm_files = [filename]
     # dbg("   mm_files = %s" % mm_files)
     while mm_files:
         mm_file = mm_files.pop()
-        if mm_file in done:
-            continue
-        # dbg("   processing %s" % mm_file)
         try:
             doc = parse(mm_file).getroot()
         except IOError as err:
             # dbg("    failed to parse %s" % mm_file)
             continue
         # dbg("    successfully parsed %s" % mm_file)
-        entries, links = walk_freeplane(doc, mm_file, entries, links=[])
-        if opts.chase:
-            for link in links:
-                link = os.path.abspath(
-                    os.path.dirname(mm_file) + '/' + link)
-                if link not in done:
-                    if not any([word in link for word in (
-                            'syllabus',
-                            'readings')]):
-                        # dbg("    placing %s in mm_files" % link)
-                        mm_files.append(link)
-        done.append(os.path.abspath(mm_file))
+        entries = walk_freeplane(doc, mm_file, entries)
 
     if opts.query:
         results_file_name = TMP_DIR + 'query-thunderdell.html'
@@ -1597,12 +1579,9 @@ if __name__ == '__main__':
     parser.add_option("--bibtex", default=False,
                       action="store_true",
                       help="emit bibtex fields rather than biblatex")
-    parser.add_option("-c", "--chase",
-                      action="store_true", default=False,
-                      help="chase links between MMs")
     parser.add_option("-D", "--defaults",
                       action="store_true", default=False,
-                      help="chase, output YAML/CSL, use default map "
+                      help="glob, output YAML/CSL, use default map "
                            " and output file")
     parser.add_option("-k", "--keys", default='-no-keys',
                       action="store_const", const='-use-keys',
@@ -1610,6 +1589,9 @@ if __name__ == '__main__':
     parser.add_option("-f", "--file-out",
                       action="store_true", default=False,
                       help="output goes to FILE.bib")
+    parser.add_option("-g", "--glob",
+                      action="store_true", default=False,
+                      help="glob filesystem for mindmaps")
     parser.add_option("-F", "--fields",
                       action="store_true", default=False,
                       help="show biblatex shortcuts, fields, "
@@ -1674,7 +1656,7 @@ if __name__ == '__main__':
         opts.YAML_CSL = True
         output = emit_yaml_csl
     if opts.defaults:
-        opts.chase = True
+        opts.glob = True
         opts.file_out = True
     if opts.file_out:
         if opts.YAML_CSL:
@@ -1710,7 +1692,6 @@ if __name__ == '__main__':
         pretty_tabulate_dict(BIB_SHORTCUTS)
         print("         t=bibtex or CSL type")
         print("         ot=organization's subtype (e.g., W3C REC)\n\n")
-
         sys.exit()
     if opts.query:
         opts.query = urllib.parse.unquote(opts.query)
@@ -1723,7 +1704,7 @@ if __name__ == '__main__':
 else:
     class opts:
         cgi = True                # called from cgi
-        chase = True              # Follow freeplane links to other local maps
+        glob = True               # Follow freeplane links to other local maps
         long_url = False          # Use short 'oldid' URLs for mediawikis
         online_urls_only = False  # Emit urls for @online only
         pretty = False            # Print as HTML with citation at end
